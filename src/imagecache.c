@@ -39,16 +39,19 @@ typedef struct imagecache_image
   int         ref;      ///< Number of references
   const char *url;      ///< Upstream URL
   uint8_t     failed;   ///< Last update failed
+  uint8_t     attempts; ///< Consecutive transient fetch failures
   uint8_t     savepend; ///< Pending save
   time_t      accessed; ///< Last time the file was accessed
   time_t      updated;  ///< Last time the file was checked
   int64_t     airtime;  ///< Earliest known airing (epoch; 0 = fetch asap)
+  int64_t     retry_at; ///< Monotonic clock for the next transient retry
   uint8_t     sha1[20]; ///< Contents hash
   enum {
     IDLE,
     SAVE,
     QUEUED,
-    FETCHING
+    FETCHING,
+    RETRY     ///< waiting (in imagecache_retry_queue) for a short retry
   }           state;    ///< save/fetch status
 
   TAILQ_ENTRY(imagecache_image) q_link;   ///< Fetch Q link
@@ -147,6 +150,13 @@ const idclass_t imagecache_class = {
 static tvh_cond_t                     imagecache_cond;
 static TAILQ_HEAD(, imagecache_image) imagecache_queue;
 
+/* Images whose last fetch failed transiently (network error, HTTP 5xx/429),
+ * waiting for a short per-image retry -- unlike the hours-coarse fail_period
+ * which handles persistent failures.  Sorted by retry_at. */
+static TAILQ_HEAD(, imagecache_image) imagecache_retry_queue;
+#define IMAGECACHE_TRANSIENT_RETRIES 3
+#define IMAGECACHE_RETRY_DELAY(attempts) sec2mono(60 << ((attempts) - 1))
+
 static void
 imagecache_incref(imagecache_image_t *img)
 {
@@ -208,7 +218,8 @@ static void
 imagecache_image_save ( imagecache_image_t *img )
 {
   img->savepend = 1;
-  if (img->state != SAVE && img->state != QUEUED && img->state != FETCHING) {
+  if (img->state != SAVE && img->state != QUEUED &&
+      img->state != FETCHING && img->state != RETRY) {
     img->state = SAVE;
     TAILQ_INSERT_TAIL(&imagecache_queue, img, q_link);
     tvh_cond_signal(&imagecache_cond, 1);
@@ -244,12 +255,32 @@ imagecache_image_enqueue ( imagecache_image_t *img )
     TAILQ_INSERT_TAIL(&imagecache_queue, img, q_link);
 }
 
+/* Schedule a short retry after a transient fetch failure (lock held). */
+static void
+imagecache_image_retry_later ( imagecache_image_t *img )
+{
+  imagecache_image_t *i;
+
+  img->state = RETRY;
+  img->retry_at = mclk() + IMAGECACHE_RETRY_DELAY(img->attempts);
+  TAILQ_FOREACH(i, &imagecache_retry_queue, q_link)
+    if (i->retry_at > img->retry_at)
+      break;
+  if (i)
+    TAILQ_INSERT_BEFORE(i, img, q_link);
+  else
+    TAILQ_INSERT_TAIL(&imagecache_retry_queue, img, q_link);
+  tvh_cond_signal(&imagecache_cond, 1);
+}
+
 static void
 imagecache_image_add ( imagecache_image_t *img )
 {
   int oldstate = img->state;
   if (!imagecache_conf.enabled) return;
   if (strncasecmp("file://", img->url, 7)) {
+    if (oldstate == RETRY)
+      TAILQ_REMOVE(&imagecache_retry_queue, img, q_link);
     img->state = QUEUED;
     if (oldstate != SAVE && oldstate != QUEUED)
       imagecache_image_enqueue(img);
@@ -352,7 +383,7 @@ imagecache_fetch_conn_close ( void )
 static int
 imagecache_image_fetch ( imagecache_image_t *img )
 {
-  int res = 1, r, reuse = 0, conn_ok = 0, keep;
+  int res = 1, r, reuse = 0, conn_ok = 0, keep, http_code = 0;
   url_t url;
   char tpath[PATH_MAX + 4] = "", path[PATH_MAX];
   tvhpoll_event_t ev;
@@ -435,6 +466,7 @@ imagecache_image_fetch ( imagecache_image_t *img )
       break;
     if (r == HTTP_CON_DONE) {
       conn_ok = 1;
+      http_code = hc->hc_code;
       if (hc->hc_code == HTTP_STATUS_OK && hc->hc_data_size > 0)
         res = imagecache_new_contents(img, tpath, path,
                                       (uint8_t *)hc->hc_data, hc->hc_data_size);
@@ -465,12 +497,28 @@ error:
   urlreset(&url);
   time(&img->updated); // even if failed (possibly request sooner?)
   if (res) {
+    /* Transient failures (no HTTP response, or 5xx/429: typically a cold
+     * CDN edge or a hiccup, not a property of the image) get a short
+     * per-image retry before falling back to the hours-coarse
+     * fail_period. */
+    if ((http_code == 0 || http_code == 429 || http_code >= 500) &&
+        img->attempts < IMAGECACHE_TRANSIENT_RETRIES) {
+      img->attempts++;
+      tvhdebug(LS_IMAGECACHE, "transient failure (%d) for %s, retry %d/%d",
+               http_code, img->url, img->attempts,
+               IMAGECACHE_TRANSIENT_RETRIES);
+      imagecache_image_retry_later(img);
+      urlreset(&url);
+      return res;
+    }
+    img->attempts = 0;
     if (!img->failed) {
       img->failed = 1;
       imagecache_image_save(img);
     }
     tvhwarn(LS_IMAGECACHE, "failed to download %s", img->url);
   } else {
+    img->attempts = 0;
     tvhdebug(LS_IMAGECACHE, "downloaded %s", img->url);
   }
   tvh_cond_signal(&imagecache_cond, 1);
@@ -495,7 +543,7 @@ imagecache_timer ( void )
         continue;
       }
     }
-    if (img->state != IDLE) continue;
+    if (img->state != IDLE) continue; /* RETRY has its own schedule */
     when = img->failed ? imagecache_conf.fail_period
                        : imagecache_conf.ok_period;
     when = img->updated + (when * 3600);
@@ -509,6 +557,7 @@ imagecache_thread ( void *p )
 {
   imagecache_image_t *img;
   int64_t timer_expire = mclk() + sec2mono(600);
+  int64_t wake;
 
   tvh_mutex_lock(&imagecache_lock);
   while (tvheadend_is_running()) {
@@ -519,11 +568,23 @@ imagecache_thread ( void *p )
       imagecache_timer();
     }
 
+    /* Promote due transient retries into the fetch queue */
+    while ((img = TAILQ_FIRST(&imagecache_retry_queue)) != NULL &&
+           img->retry_at <= mclk()) {
+      TAILQ_REMOVE(&imagecache_retry_queue, img, q_link);
+      img->state = IDLE;
+      imagecache_image_add(img);
+    }
+
     /* Get entry */
     if (!(img = TAILQ_FIRST(&imagecache_queue))) {
       /* queue drained: no need to keep an idle connection open */
       imagecache_fetch_conn_close();
-      tvh_cond_timedwait(&imagecache_cond, &imagecache_lock, timer_expire);
+      wake = timer_expire;
+      if ((img = TAILQ_FIRST(&imagecache_retry_queue)) != NULL &&
+          img->retry_at < wake)
+        wake = img->retry_at;
+      tvh_cond_timedwait(&imagecache_cond, &imagecache_lock, wake);
       continue;
     }
 
@@ -546,6 +607,11 @@ retry:
       if (imagecache_conf.enabled) {
         img->state = FETCHING;
         (void)imagecache_image_fetch(img);
+      }
+      if (img->state == RETRY) {
+        /* transient failure: parked in the retry queue, leave it there */
+        imagecache_decref(img);
+        continue;
       }
       if (img->savepend) {
         img->state = SAVE;
@@ -592,6 +658,7 @@ imagecache_init ( void )
   /* Create threads */
   tvh_cond_init(&imagecache_cond, 1);
   TAILQ_INIT(&imagecache_queue);
+  TAILQ_INIT(&imagecache_retry_queue);
 
   /* Load settings */
   if ((m = hts_settings_load("imagecache/config"))) {
@@ -645,6 +712,8 @@ imagecache_init ( void )
 static void
 imagecache_destroy ( imagecache_image_t *img, int delconf )
 {
+  if (img->state == RETRY)
+    TAILQ_REMOVE(&imagecache_retry_queue, img, q_link);
   if (delconf) {
     hts_settings_remove("imagecache/meta/%d", img->id);
     hts_settings_remove("imagecache/data/%d", img->id);
@@ -897,6 +966,11 @@ imagecache_filename ( int id, char *name, size_t len )
       i->state = FETCHING;
       TAILQ_REMOVE(&imagecache_queue, i, q_link);
       e = imagecache_image_fetch(i);
+      /* fetch may have parked the image for a transient retry; otherwise
+       * return it to IDLE (it was left as FETCHING forever, so the
+       * periodic re-check never considered it again) */
+      if (i->state == FETCHING)
+        i->state = IDLE;
       if (e)
         goto out_error;
     }
