@@ -383,7 +383,12 @@ imagecache_fetch_conn_close ( void )
 static int
 imagecache_image_fetch ( imagecache_image_t *img )
 {
-  int res = 1, r, reuse = 0, conn_ok = 0, keep, http_code = 0;
+  int res = 1;
+  int r;
+  int reuse = 0;
+  int conn_ok = 0;
+  int keep;
+  int http_code = 0;
   url_t url;
   char tpath[PATH_MAX + 4] = "", path[PATH_MAX];
   tvhpoll_event_t ev;
@@ -531,6 +536,25 @@ error:
   return res;
 };
 
+/* Move due transient retries into the fetch queue and return the earlier of
+ * `deadline` and the next pending retry (thread wake-up time). Lock held. */
+static int64_t
+imagecache_retry_promote ( int64_t deadline )
+{
+  imagecache_image_t *img;
+
+  while ((img = TAILQ_FIRST(&imagecache_retry_queue)) != NULL &&
+         img->retry_at <= mclk()) {
+    TAILQ_REMOVE(&imagecache_retry_queue, img, q_link);
+    img->state = IDLE;
+    imagecache_image_add(img);
+  }
+  img = TAILQ_FIRST(&imagecache_retry_queue);
+  if (img != NULL && img->retry_at < deadline)
+    deadline = img->retry_at;
+  return deadline;
+}
+
 static void
 imagecache_timer ( void )
 {
@@ -574,21 +598,12 @@ imagecache_thread ( void *p )
     }
 
     /* Promote due transient retries into the fetch queue */
-    while ((img = TAILQ_FIRST(&imagecache_retry_queue)) != NULL &&
-           img->retry_at <= mclk()) {
-      TAILQ_REMOVE(&imagecache_retry_queue, img, q_link);
-      img->state = IDLE;
-      imagecache_image_add(img);
-    }
+    wake = imagecache_retry_promote(timer_expire);
 
     /* Get entry */
     if (!(img = TAILQ_FIRST(&imagecache_queue))) {
       /* queue drained: no need to keep an idle connection open */
       imagecache_fetch_conn_close();
-      wake = timer_expire;
-      if ((img = TAILQ_FIRST(&imagecache_retry_queue)) != NULL &&
-          img->retry_at < wake)
-        wake = img->retry_at;
       tvh_cond_timedwait(&imagecache_cond, &imagecache_lock, wake);
       continue;
     }
@@ -932,6 +947,46 @@ imagecache_get_propstr ( const char *image, char *buf, size_t buflen )
 /*
  * Get data
  */
+/* Make a remote image available on disk for imagecache_filename(): wait for
+ * an in-flight fetch, or fetch it directly when only queued. Lock held.
+ * Returns 0 when the data file can be served. */
+static int
+imagecache_image_ready ( imagecache_image_t *i )
+{
+  int e;
+  int64_t mono;
+
+  /* Use existing */
+  if (i->updated)
+    return 0;
+
+  /* Wait for the in-flight fetch */
+  if (i->state == FETCHING) {
+    mono = mclk() + sec2mono(5);
+    do {
+      e = tvh_cond_timedwait(&imagecache_cond, &imagecache_lock, mono);
+      if (e == ETIMEDOUT)
+        return -1;
+    } while (ERRNO_AGAIN(e));
+    return 0;
+  }
+
+  /* Attempt to fetch directly */
+  if (i->state == QUEUED) {
+    i->state = FETCHING;
+    TAILQ_REMOVE(&imagecache_queue, i, q_link);
+    e = imagecache_image_fetch(i);
+    /* fetch may have parked the image for a transient retry; otherwise
+     * return it to IDLE (it was left as FETCHING forever, so the
+     * periodic re-check never considered it again) */
+    if (i->state == FETCHING)
+      i->state = IDLE;
+    return e ? -1 : 0;
+  }
+
+  return 0;
+}
+
 int
 imagecache_filename ( int id, char *name, size_t len )
 {
@@ -956,34 +1011,8 @@ imagecache_filename ( int id, char *name, size_t len )
 
   /* Remote file */
   else if (imagecache_conf.enabled) {
-    int e;
-    int64_t mono;
-
-    /* Use existing */
-    if (i->updated) {
-
-    /* Wait */
-    } else if (i->state == FETCHING) {
-      mono = mclk() + sec2mono(5);
-      do {
-        e = tvh_cond_timedwait(&imagecache_cond, &imagecache_lock, mono);
-        if (e == ETIMEDOUT)
-          goto out_error;
-      } while (ERRNO_AGAIN(e));
-
-    /* Attempt to fetch */
-    } else if (i->state == QUEUED) {
-      i->state = FETCHING;
-      TAILQ_REMOVE(&imagecache_queue, i, q_link);
-      e = imagecache_image_fetch(i);
-      /* fetch may have parked the image for a transient retry; otherwise
-       * return it to IDLE (it was left as FETCHING forever, so the
-       * periodic re-check never considered it again) */
-      if (i->state == FETCHING)
-        i->state = IDLE;
-      if (e)
-        goto out_error;
-    }
+    if (imagecache_image_ready(i))
+      goto out_error;
     if (hts_settings_buildpath(name, len, "imagecache/data/%d", i->id))
       goto out_error;
   }
