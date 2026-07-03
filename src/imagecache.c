@@ -712,8 +712,13 @@ imagecache_init ( void )
 static void
 imagecache_destroy ( imagecache_image_t *img, int delconf )
 {
+  /* unlink from whichever queue holds it: destroying a QUEUED/SAVE image
+   * (e.g. "Clean image cache" while the fetch queue is filling) left a
+   * dangling entry in the fetch queue behind */
   if (img->state == RETRY)
     TAILQ_REMOVE(&imagecache_retry_queue, img, q_link);
+  else if (img->state == QUEUED || img->state == SAVE)
+    TAILQ_REMOVE(&imagecache_queue, img, q_link);
   if (delconf) {
     hts_settings_remove("imagecache/meta/%d", img->id);
     hts_settings_remove("imagecache/data/%d", img->id);
