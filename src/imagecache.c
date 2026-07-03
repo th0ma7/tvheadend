@@ -432,9 +432,14 @@ imagecache_image_fetch ( imagecache_image_t *img )
     hc->hc_data_limit  = 256*1024;
     r = http_client_simple_reconnect(hc, &url, HTTP_VERSION_1_1);
     if (r < 0) {
-      /* stale or broken cached connection: start afresh */
+      /* stale or broken cached connection: start completely afresh,
+       * including the poll set */
       http_client_close(hc);
       hc = NULL;
+      if (efd != NULL) {
+        tvhpoll_destroy(efd);
+        efd = NULL;
+      }
     }
   }
   if (hc == NULL) {
