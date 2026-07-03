@@ -42,6 +42,7 @@ typedef struct imagecache_image
   uint8_t     savepend; ///< Pending save
   time_t      accessed; ///< Last time the file was accessed
   time_t      updated;  ///< Last time the file was checked
+  int64_t     airtime;  ///< Earliest known airing (epoch; 0 = fetch asap)
   uint8_t     sha1[20]; ///< Contents hash
   enum {
     IDLE,
@@ -215,6 +216,23 @@ imagecache_new_id ( imagecache_image_t *i )
   } while (j);
 }
 
+/* Insert into the fetch queue ordered by earliest airing first (airtime 0 =
+ * asap: channel icons and other non-EPG images jump the queue).  The EPG
+ * enqueues images roughly chronologically, so the forward scan is cheap. */
+static void
+imagecache_image_enqueue ( imagecache_image_t *img )
+{
+  imagecache_image_t *i;
+
+  TAILQ_FOREACH(i, &imagecache_queue, q_link)
+    if (i->airtime > img->airtime)
+      break;
+  if (i)
+    TAILQ_INSERT_BEFORE(i, img, q_link);
+  else
+    TAILQ_INSERT_TAIL(&imagecache_queue, img, q_link);
+}
+
 static void
 imagecache_image_add ( imagecache_image_t *img )
 {
@@ -223,7 +241,7 @@ imagecache_image_add ( imagecache_image_t *img )
   if (strncasecmp("file://", img->url, 7)) {
     img->state = QUEUED;
     if (oldstate != SAVE && oldstate != QUEUED)
-      TAILQ_INSERT_TAIL(&imagecache_queue, img, q_link);
+      imagecache_image_enqueue(img);
     tvh_cond_signal(&imagecache_cond, 1);
   } else {
     time(&img->updated);
@@ -667,6 +685,17 @@ imagecache_trigger( void )
 int
 imagecache_get_id ( const char *url )
 {
+  return imagecache_get_id_prio(url, 0);
+}
+
+/*
+ * As above, but with the earliest known airing time of the content the
+ * image illustrates: the fetch queue is drained in ascending airtime order
+ * so artwork for soon-airing events is downloaded first.
+ */
+int
+imagecache_get_id_prio ( const char *url, int64_t airtime )
+{
   int id = 0;
   imagecache_image_t *i;
   int save = 0;
@@ -692,10 +721,19 @@ imagecache_get_id ( const char *url )
     i = imagecache_skel;
     i->ref = 1;
     i->url = strdup(url);
+    i->airtime = airtime;
     SKEL_USED(imagecache_skel);
     save = 1;
     imagecache_new_id(i);
     imagecache_image_add(i);
+  } else if (airtime && (i->airtime == 0 || airtime < i->airtime)) {
+    /* Re-referenced by a sooner airing: raise its priority.  Reposition it
+     * when still waiting in the fetch queue. */
+    i->airtime = airtime;
+    if (i->state == QUEUED) {
+      TAILQ_REMOVE(&imagecache_queue, i, q_link);
+      imagecache_image_enqueue(i);
+    }
   }
 
   /* Do file:// to imagecache ID mapping even if imagecache is not enabled */

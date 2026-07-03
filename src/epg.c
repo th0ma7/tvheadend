@@ -1417,7 +1417,7 @@ int epg_broadcast_set_image
   save = _epg_object_set_str(b, &b->image, image,
                              changed, EPG_CHANGED_IMAGE);
   if (save)
-    imagecache_get_id(image);
+    imagecache_get_id_prio(image, (int64_t)b->start);
   return save;
 }
 

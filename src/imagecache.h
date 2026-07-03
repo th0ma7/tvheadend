@@ -45,6 +45,10 @@ void imagecache_trigger  ( void );
 // Note: will return 0 if invalid (must serve original URL)
 int imagecache_get_id  ( const char *url );
 
+// As above; airtime (epoch) of the earliest airing using this image
+// prioritizes the fetch queue (soonest first, 0 = fetch asap)
+int imagecache_get_id_prio ( const char *url, int64_t airtime );
+
 const char *imagecache_get_propstr ( const char *image, char *buf, size_t buflen );
 
 int imagecache_filename ( int id, char *name, size_t len );
