@@ -26,6 +26,7 @@ struct imagecache_config {
   idnode_t  idnode;
   int       enabled;
   int       ignore_sslcert;
+  int       reuse_conn;
   uint32_t  expire;
   uint32_t  ok_period;
   uint32_t  fail_period;

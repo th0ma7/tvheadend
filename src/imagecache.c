@@ -104,6 +104,17 @@ const idclass_t imagecache_class = {
       .off    = offsetof(struct imagecache_config, ignore_sslcert),
     },
     {
+      .type   = PT_BOOL,
+      .id     = "reuse_conn",
+      .name   = N_("Reuse HTTP connection"),
+      .desc   = N_("Keep the HTTP connection to the image server open "
+                   "between downloads (one TCP/TLS handshake for many "
+                   "images) instead of opening a new connection per "
+                   "image. Disable only if a server misbehaves with "
+                   "persistent connections."),
+      .off    = offsetof(struct imagecache_config, reuse_conn),
+    },
+    {
       .type   = PT_U32,
       .id     = "expire",
       .name   = N_("Expire time"),
@@ -307,10 +318,41 @@ imagecache_new_contents ( imagecache_image_t *img,
   return r;
 }
 
+/*
+ * Persistent fetch connection ("Reuse HTTP connection" setting).
+ *
+ * Guide artwork typically lives on a single CDN; re-using one kept-alive
+ * client turns thousands of TCP+TLS handshakes into one.  The cached client
+ * is owned by whoever grabs it under imagecache_lock (the fetch thread or a
+ * direct fetch from imagecache_filename); concurrent fetches simply fall
+ * back to a one-shot connection.  It is dropped whenever the fetch queue
+ * drains, so no idle socket is kept open.
+ */
+static http_client_t *imagecache_fetch_hc   = NULL;
+static tvhpoll_t     *imagecache_fetch_efd  = NULL;
+static int            imagecache_fetch_busy = 0;
+
+/* Close the cached fetch connection (imagecache_lock held). */
+static void
+imagecache_fetch_conn_close ( void )
+{
+  http_client_t *hc = imagecache_fetch_hc;
+  tvhpoll_t *efd = imagecache_fetch_efd;
+
+  imagecache_fetch_hc  = NULL;
+  imagecache_fetch_efd = NULL;
+  if (hc == NULL && efd == NULL)
+    return;
+  tvh_mutex_unlock(&imagecache_lock);
+  if (hc)  http_client_close(hc);
+  if (efd) tvhpoll_destroy(efd);
+  tvh_mutex_lock(&imagecache_lock);
+}
+
 static int
 imagecache_image_fetch ( imagecache_image_t *img )
 {
-  int res = 1, r;
+  int res = 1, r, reuse = 0, conn_ok = 0, keep;
   url_t url;
   char tpath[PATH_MAX + 4] = "", path[PATH_MAX];
   tvhpoll_event_t ev;
@@ -332,6 +374,15 @@ imagecache_image_fetch ( imagecache_image_t *img )
     goto error;
   snprintf(tpath, sizeof(tpath), "%s.tmp", path);
 
+  /* Take ownership of the cached kept-alive connection (when enabled and
+   * not in use by a concurrent fetch) */
+  if (imagecache_conf.reuse_conn && !imagecache_fetch_busy) {
+    reuse = 1;
+    imagecache_fetch_busy = 1;
+    hc  = imagecache_fetch_hc;  imagecache_fetch_hc  = NULL;
+    efd = imagecache_fetch_efd; imagecache_fetch_efd = NULL;
+  }
+
   /* Fetch (release lock, incase of delays) */
   tvh_mutex_unlock(&imagecache_lock);
 
@@ -343,20 +394,35 @@ imagecache_image_fetch ( imagecache_image_t *img )
     goto error_lock;
   }
 
-  hc = http_client_connect(NULL, HTTP_VERSION_1_1, url.scheme,
-                           url.host, url.port, NULL);
-  if (hc == NULL)
-    goto error_lock;
+  if (hc != NULL) {
+    /* Re-issue on the kept-alive client: same origin reuses the open
+     * connection, a different origin transparently reconnects. */
+    hc->hc_handle_location = 1;
+    hc->hc_data_limit  = 256*1024;
+    r = http_client_simple_reconnect(hc, &url, HTTP_VERSION_1_1);
+    if (r < 0) {
+      /* stale or broken cached connection: start afresh */
+      http_client_close(hc);
+      hc = NULL;
+    }
+  }
+  if (hc == NULL) {
+    hc = http_client_connect(NULL, HTTP_VERSION_1_1, url.scheme,
+                             url.host, url.port, NULL);
+    if (hc == NULL)
+      goto error_lock;
 
-  http_client_ssl_peer_verify(hc, imagecache_conf.ignore_sslcert ? 0 : 1);
-  hc->hc_handle_location = 1;
-  hc->hc_data_limit  = 256*1024;
-  efd = tvhpoll_create(1);
-  hc->hc_efd = efd;
+    http_client_ssl_peer_verify(hc, imagecache_conf.ignore_sslcert ? 0 : 1);
+    hc->hc_handle_location = 1;
+    hc->hc_data_limit  = 256*1024;
+    if (efd == NULL)
+      efd = tvhpoll_create(1);
+    hc->hc_efd = efd;
 
-  r = http_client_simple(hc, &url);
-  if (r < 0)
-    goto error_lock;
+    r = http_client_simple(hc, &url);
+    if (r < 0)
+      goto error_lock;
+  }
 
   while (tvheadend_is_running()) {
     r = tvhpoll_wait(efd, &ev, 1, -1);
@@ -368,6 +434,7 @@ imagecache_image_fetch ( imagecache_image_t *img )
     if (r < 0)
       break;
     if (r == HTTP_CON_DONE) {
+      conn_ok = 1;
       if (hc->hc_code == HTTP_STATUS_OK && hc->hc_data_size > 0)
         res = imagecache_new_contents(img, tpath, path,
                                       (uint8_t *)hc->hc_data, hc->hc_data_size);
@@ -377,11 +444,25 @@ imagecache_image_fetch ( imagecache_image_t *img )
 
   /* Process */
 error_lock:
-  if (NULL != hc) http_client_close(hc);
+  /* Keep the healthy kept-alive connection for the next fetch,
+   * dispose of anything else */
+  keep = (hc != NULL && reuse && conn_ok && hc->hc_keepalive);
+  if (!keep) {
+    if (hc != NULL) http_client_close(hc);
+    if (efd != NULL) tvhpoll_destroy(efd);
+    hc = NULL;
+    efd = NULL;
+  }
   tvh_mutex_lock(&imagecache_lock);
+  if (reuse) {
+    imagecache_fetch_busy = 0;
+    if (keep) {
+      imagecache_fetch_hc  = hc;
+      imagecache_fetch_efd = efd;
+    }
+  }
 error:
   urlreset(&url);
-  tvhpoll_destroy(efd);
   time(&img->updated); // even if failed (possibly request sooner?)
   if (res) {
     if (!img->failed) {
@@ -440,6 +521,8 @@ imagecache_thread ( void *p )
 
     /* Get entry */
     if (!(img = TAILQ_FIRST(&imagecache_queue))) {
+      /* queue drained: no need to keep an idle connection open */
+      imagecache_fetch_conn_close();
       tvh_cond_timedwait(&imagecache_cond, &imagecache_lock, timer_expire);
       continue;
     }
@@ -502,6 +585,7 @@ imagecache_init ( void )
   imagecache_conf.ok_period      = 24 * 7; // weekly
   imagecache_conf.fail_period    = 24;     // daily
   imagecache_conf.ignore_sslcert = 0;
+  imagecache_conf.reuse_conn     = 1;
 
   idclass_register(&imagecache_class);
 
@@ -583,6 +667,7 @@ imagecache_done ( void )
   tvh_mutex_unlock(&imagecache_lock);
   pthread_join(imagecache_tid, NULL);
   tvh_mutex_lock(&imagecache_lock);
+  imagecache_fetch_conn_close();
   while ((img = RB_FIRST(&imagecache_by_id)) != NULL) {
     if (img->state == SAVE) {
       htsmsg_t *m = imagecache_image_htsmsg(img);
