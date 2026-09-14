@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-07 02:13+0000\n"
+"POT-Creation-Date: 2026-09-14 07:25+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1201,6 +1201,18 @@ msgstr ""
 msgid "Always reject."
 msgstr ""
 
+#: src/docs_inc.c:6261
+msgid "Always use the dark theme, a low-glare palette for night-time use."
+msgstr ""
+
+#: src/docs_inc.c:6265
+msgid "Always use the high contrast accessibility theme."
+msgstr ""
+
+#: src/docs_inc.c:6257
+msgid "Always use the light theme."
+msgstr ""
+
 #: src/docs_inc.c:126
 msgid "An Example TV Adapter Tree"
 msgstr ""
@@ -1390,7 +1402,7 @@ msgstr ""
 msgid "Authcode only"
 msgstr ""
 
-#: src/docs_inc.c:6175 src/docs_inc.c:6251
+#: src/docs_inc.c:6175 src/docs_inc.c:6243
 msgid "Auto"
 msgstr ""
 
@@ -2299,7 +2311,7 @@ msgstr ""
 msgid "DVR profiles and related settings"
 msgstr ""
 
-#: src/docs_inc.c:6247 src/docs_inc.c:6259
+#: src/docs_inc.c:6251 src/docs_inc.c:6259
 msgid "Dark"
 msgstr ""
 
@@ -2965,7 +2977,7 @@ msgstr ""
 msgid "First ordered list item"
 msgstr ""
 
-#: src/docs_inc.c:6253
+#: src/docs_inc.c:6245
 msgid "Follow the browser or operating system, switching between"
 msgstr ""
 
@@ -3916,7 +3928,7 @@ msgstr ""
 msgid "Licensing"
 msgstr ""
 
-#: src/docs_inc.c:6243 src/docs_inc.c:6255
+#: src/docs_inc.c:6247 src/docs_inc.c:6255
 msgid "Light"
 msgstr ""
 
@@ -7710,20 +7722,8 @@ msgstr ""
 msgid "Use the \"Persistent user interface level\" value as set in"
 msgstr ""
 
-#: src/docs_inc.c:6245
-msgid "Use the (default) light theme."
-msgstr ""
-
-#: src/docs_inc.c:6249
-msgid "Use the dark theme, a low-glare palette for night-time use."
-msgstr ""
-
 #: src/docs_inc.c:6289
 msgid "Use the default view level value as set in"
-msgstr ""
-
-#: src/docs_inc.c:6265
-msgid "Use the high contrast accessibility theme."
 msgstr ""
 
 #: src/docs_inc.c:4723
@@ -8278,7 +8278,8 @@ msgid ""
 "__Auto__ tracks the host's `prefers-color-scheme`, so the interface follows "
 "a system that switches itself at sunset without the theme needing to be "
 "changed by hand. The switch takes effect as soon as the host setting "
-"changes; no reload is needed."
+"changes; no reload is needed. Because it is the default, only a user who "
+"wants to ignore the host setting has to pick a theme at all."
 msgstr ""
 
 #: src/docs_inc.c:1808
@@ -8767,7 +8768,7 @@ msgid "access"
 msgstr ""
 
 #: src/docs_inc.c:1060 src/docs_inc.c:4917 src/docs_inc.c:4927
-#: src/docs_inc.c:4937 src/docs_inc.c:4959 src/docs_inc.c:6257
+#: src/docs_inc.c:4937 src/docs_inc.c:4959 src/docs_inc.c:6249
 msgid "and"
 msgstr ""
 
@@ -8785,8 +8786,8 @@ msgstr ""
 msgid "arm"
 msgstr ""
 
-#: src/docs_inc.c:6261
-msgid "as that setting changes."
+#: src/docs_inc.c:6253
+msgid "as that setting changes. This is the default."
 msgstr ""
 
 #: src/docs_inc.c:3538
