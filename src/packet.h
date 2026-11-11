@@ -68,6 +68,8 @@ typedef struct th_pkt {
 
       uint16_t pkt_aspect_num;
       uint16_t pkt_aspect_den;
+      uint16_t pkt_width;
+      uint16_t pkt_height;
     } v;
     struct {
       uint8_t pkt_keyframe;

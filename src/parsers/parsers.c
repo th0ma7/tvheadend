@@ -169,6 +169,8 @@ deliver:
   if (SCT_ISVIDEO(pkt->pkt_type)) {
     pkt->v.pkt_aspect_num = st->es_aspect_num;
     pkt->v.pkt_aspect_den = st->es_aspect_den;
+    pkt->v.pkt_width = st->es_width;
+    pkt->v.pkt_height = st->es_height;
   }
 
   /* Forward packet -- a replay parser gets no restart start message to

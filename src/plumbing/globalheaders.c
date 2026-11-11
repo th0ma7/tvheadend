@@ -100,6 +100,15 @@ apply_header(streaming_start_component_t *ssc, th_pkt_t *pkt)
   }
 
   if(SCT_ISVIDEO(ssc->es_type)) {
+    /*
+     * A cached stream map may predate discovery of video dimensions.
+     * Recover missing dimensions from the replay parser's packets.
+     */
+    if (pkt->v.pkt_width && pkt->v.pkt_height &&
+        (!ssc->es_width || !ssc->es_height)) {
+      ssc->es_width = pkt->v.pkt_width;
+      ssc->es_height = pkt->v.pkt_height;
+    }
     if(pkt->v.pkt_aspect_num && pkt->v.pkt_aspect_den) {
       ssc->es_aspect_num = pkt->v.pkt_aspect_num;
       ssc->es_aspect_den = pkt->v.pkt_aspect_den;
