@@ -242,6 +242,11 @@ svcbuf_seg_open ( svcbuf_t *sb )
     return NULL;
   }
   seg = calloc(1, sizeof(*seg));
+  if (seg == NULL) {
+    close(fd);                  /* the descriptor is ours already */
+    unlink(path);
+    return NULL;
+  }
   seg->fd   = fd;
   seg->path = strdup(path);
   TAILQ_INSERT_TAIL(&sb->segs, seg, link);
@@ -528,6 +533,35 @@ svcbuf_expire ( svcbuf_t *sb )
   }
 }
 
+/*
+ * Make room in the retained RAM budget for one block.  The writer thread
+ * expires when the cache is already over its budget, while a reservation
+ * fails when it would take it over: between the two lies a window where
+ * nothing is evicted, and the append would declare a gap -- which drops the
+ * whole history -- rather than give up the oldest block.  Evict settled
+ * blocks the gates have passed until the reservation fits.  sb->lock held.
+ */
+static int
+svcbuf_ram_make_room ( svcbuf_t *sb, size_t alloc )
+{
+  const uint64_t pin = svcbuf_pinned(sb);
+  svcbuf_block_t *b;
+  svcbuf_block_t *nb;
+
+  for (b = TAILQ_FIRST(&sb->blocks); b != NULL; b = nb) {
+    if (!b->settled || b->seq >= pin)
+      break;
+    nb = TAILQ_NEXT(b, link);
+    if (!b->keep_ram)
+      continue;
+    svcbuf_block_remove(sb, b);
+    if (timeshift_ram_reserve(alloc))
+      return 1;
+  }
+
+  return 0;
+}
+
 static void *
 svcbuf_writer ( void *aux )
 {
@@ -743,6 +777,11 @@ svcbuf_input ( void *opaque, streaming_message_t *sm )
         alloc = MAX(len, SVCBUF_BLOCK_SIZE);
         ram_reserved = timeshift_ram_reserve(alloc);
 
+        /* Nowhere else to put the payload: give up the oldest block the
+           gates have passed rather than the whole history */
+        if (!ram_reserved && (sb->ram_only || sb->wr_error))
+          ram_reserved = svcbuf_ram_make_room(sb, alloc);
+
         keep_ram = ram_reserved;
 
         if (!keep_ram && (sb->ram_only || sb->wr_error)) {
@@ -901,6 +940,9 @@ svcbuf_service_start ( service_t *t )
     return;
 
   sb = calloc(1, sizeof(*sb));
+  if (sb == NULL)
+    return;                     /* no cache for this service, as if disabled */
+
   /* The cache outlives the service stopping -- a reader or a keepalive can
    * still hold it -- and its threads dereference sb->service for the stream
    * mutex and the name, so hold the service for as long as the cache lives */
@@ -1465,6 +1507,9 @@ svcbuf_gate_create ( service_t *t, time_t from, time_t to, int all,
     return NULL;
 
   g = calloc(1, sizeof(*g));
+  if (g == NULL)
+    return NULL;                /* the caller keeps its own output */
+
   g->output = output;
   g->from   = from;
   g->to     = to;
@@ -1573,6 +1618,10 @@ svcbuf_reader_t *
 svcbuf_reader_create ( svcbuf_t *sb )
 {
   svcbuf_reader_t *r = calloc(1, sizeof(*r));
+
+  if (r == NULL)
+    return NULL;
+
   r->sb = sb;
   atomic_add(&sb->refcount, 1);
   tvh_mutex_lock(&sb->lock);

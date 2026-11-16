@@ -658,6 +658,14 @@ static void _epg_channel_rem_broadcast
   ( channel_t *ch, epg_broadcast_t *ebc, epg_broadcast_t *ebc_new )
 {
   RB_REMOVE(&ch->ch_epg_schedule, ebc, sched_link);
+  /*
+   * RB_REMOVE leaves the removed node's own links alone.  A broadcast held
+   * for retrospective recording outlives the schedule it was in, and
+   * RB_NEXT/RB_PREV on it would follow those links to neighbours that may
+   * since have been freed -- the HTSP event handlers and the DVR both ask
+   * for them.  A cleared entry reports no neighbour instead.
+   */
+  memset(&ebc->sched_link, 0, sizeof(ebc->sched_link));
   if (ch->ch_epg_now  == ebc) ch->ch_epg_now  = NULL;
   if (ch->ch_epg_next == ebc) ch->ch_epg_next = NULL;
   if (ebc_new) {

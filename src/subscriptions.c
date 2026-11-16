@@ -570,6 +570,18 @@ subscription_input_null(void *opaque, streaming_message_t *sm)
 {
   th_subscription_t *s = opaque;
   if (sm->sm_type == SMT_STOP && subgetstate(s) != SUBSCRIPTION_ZOMBIE) {
+    /*
+     * A stream-map change on an idle service arrives here as a
+     * reconfiguration stop from service_restart_streams(), and the service
+     * keeps running.  Removing the cache keepalive on that would stop the
+     * now-empty service and disconnect its cache well before the timeout
+     * the setting promises.  Terminal stops still remove it.
+     */
+    if (s->ths_cache_keepalive &&
+        sm->sm_code == SM_CODE_SOURCE_RECONFIGURED) {
+      streaming_msg_free(sm);
+      return;
+    }
     LIST_INSERT_HEAD(&subscriptions_remove, s, ths_remove_link);
     subscription_delayed_reschedule(0);
   }

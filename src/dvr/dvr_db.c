@@ -900,6 +900,17 @@ dvr_entry_set_timer(dvr_entry_t *de)
     dvr_timer_start_recording(de);
     return;
   }
+
+  /*
+   * A retrospective replay already running must not reach the wall-clock
+   * path below.  Its stop is in the past by definition, so any
+   * dvr_entry_set_timer() arriving while it runs -- the same web UI edit or
+   * EPG update as above -- would call dvr_stop_recording() and truncate the
+   * replay.  The gate's own boundary ends it, through
+   * dvr_entry_cache_replay_done().
+   */
+  if (de->de_cache_retro && de->de_sched_state == DVR_RECORDING)
+    return;
 #endif
 
   if (now >= stop || de->de_dont_reschedule) {

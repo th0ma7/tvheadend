@@ -134,6 +134,8 @@ typedef struct svcts {
   int                  at_head;
   int                  reanchor;    ///< Restart the pacing on the next one
   int64_t              skip_to;     ///< us: drop until a keyframe from here
+  int                  skip_pending; ///< ... which is a position, not a flag:
+                                     ///< a seek to 0 is a seek like any other
   int                  skip_back;   ///< ... or the last one before, going back
   streaming_message_t *skip_reply;  ///< Answered with the first packet
   svcts_pkt_t         *rw_pkt;      ///< Rewind: next keyframe to show
@@ -165,10 +167,21 @@ svcts_pkt_time ( const th_pkt_t *pkt )
 }
 
 static int
-svcts_key ( th_pkt_t *pkt, svcts_key_t *k )
+svcts_key ( th_pkt_t *pkt, svcts_key_t *k, int audio_too )
 {
   size_t len = pktbuf_len(pkt->pkt_payload);
-  if (!SCT_ISVIDEO(pkt->pkt_type) || len < 64 || pkt->pkt_dts == PTS_UNSET)
+  if (len < 64 || pkt->pkt_dts == PTS_UNSET)
+    return 0;
+  /*
+   * Video frames are the distinctive ones, and keeping audio out of the ring
+   * leaves every slot for them.  A service with no video has none to put
+   * there, though, and without a fingerprint it never calibrates: pause
+   * answers speed 100 and every seek answers SMT_SKIP_ERROR.  The key
+   * carries the component index, so an audio frame can only ever match
+   * another frame of the same component.
+   */
+  if (!SCT_ISVIDEO(pkt->pkt_type) &&
+      !(audio_too && SCT_ISAUDIO(pkt->pkt_type)))
     return 0;
   k->index = pkt->pkt_componentindex;
   k->len   = len;
@@ -599,7 +612,7 @@ svcts_live_seen ( svcts_t *st, th_pkt_t *pkt )
     }
   }
   k = &st->ring[st->ring_pos];
-  if (svcts_key(pkt, k)) {
+  if (svcts_key(pkt, k, !svcts_start_has_video(st->live_start))) {
     k->dts = pkt->pkt_dts;
     st->ring_pos = (st->ring_pos + 1) % SVCTS_RING;
   }
@@ -743,7 +756,7 @@ svcts_calibrate ( svcts_t *st, th_pkt_t *pkt )
   const svcts_key_t *match = NULL;
   int i;
 
-  if (!svcts_key(pkt, &k))
+  if (!svcts_key(pkt, &k, !svcts_start_has_video(st->rd_start)))
     return;
   for (i = 0; i < SVCTS_RING; i++) {
     const svcts_key_t *r = &st->ring[i];
@@ -945,6 +958,7 @@ svcts_replay_drop ( svcts_t *st )
   st->off = 0;
 
   st->skip_to = 0;
+  st->skip_pending = 0;
   st->skip_back = 0;
   st->reanchor = 0;
 
@@ -1020,6 +1034,8 @@ svcts_replay_open ( svcts_t *st, int64_t time )
 
   if (st->rd == NULL) {
     st->rd = svcbuf_reader_create(sb);
+    if (st->rd == NULL)
+      return 0;
     st->rd_service = svcbuf_service(sb);
   }
 
@@ -1222,19 +1238,28 @@ svcts_head ( svcts_t *st )
 {
   svcts_pkt_t *p = TAILQ_FIRST(&st->q);
   svcts_pkt_t *n;
+  /*
+   * svcts_is_keyframe() answers for video only, so a generation carrying no
+   * video has no keyframe to land on: requiring one would drop every packet
+   * and leave the seek with nothing to show.
+   */
+  const int have_video = svcts_start_has_video(st->rd_start);
 
   while (p != NULL &&
-         ((st->skip_to &&
-           !(svcts_is_keyframe(p->pkt) && p->time >= st->skip_to)) ||
-          (st->keyframe_mode && !svcts_is_keyframe(p->pkt)))) {
+         ((st->skip_pending &&
+           !((!have_video || svcts_is_keyframe(p->pkt)) &&
+             p->time >= st->skip_to)) ||
+          (st->keyframe_mode && have_video && !svcts_is_keyframe(p->pkt)))) {
     n = TAILQ_NEXT(p, link);
     TAILQ_REMOVE(&st->q, p, link);
     svcts_pkt_drop(p);
     p = n;
   }
 
-  if (p != NULL)
+  if (p != NULL) {
     st->skip_to = 0;
+    st->skip_pending = 0;
+  }
 
   return p;
 }
@@ -1247,7 +1272,7 @@ svcts_next ( svcts_t *st )
   svcts_pkt_t *p;
   int r;
 
-  if (st->skip_back && st->skip_to)
+  if (st->skip_back && st->skip_pending)
     svcts_skip_back_select(st);
   for (;;) {
     if (st->reset)
@@ -1265,6 +1290,7 @@ svcts_next ( svcts_t *st )
         return NULL;
       svcts_out_reset(st);
       st->skip_to = t;
+      st->skip_pending = 1;
       st->reanchor = 1;
       continue;
     }
@@ -1561,6 +1587,7 @@ svcts_reposition ( svcts_t *st )
       if (!st->is_video[i])
         st->out_dts[i] = PTS_UNSET;
     st->skip_to = st->last_time;
+    st->skip_pending = 1;
     st->skip_back = 0;
   }
 }
@@ -1662,6 +1689,7 @@ svcts_skip ( svcts_t *st, streaming_message_t *ctrl )
     goto error;
   svcts_out_reset(st);
   st->skip_to = t;
+  st->skip_pending = 1;
   st->skip_back = t < cur;
   if (st->skip_reply)
     streaming_msg_free(st->skip_reply);

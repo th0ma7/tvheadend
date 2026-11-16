@@ -455,8 +455,12 @@ htsp_cache_record_position
      * entry it may write */
     if (dvr_entry_verify(de, htsp->htsp_granted_access, 0))
       continue;
-    if (when < dvr_entry_get_start_time(de, 0) ||
-        when > dvr_entry_get_stop_time(de))
+    /*
+     * Only the upper bound belongs to the schedule.  A recording backfilled
+     * from the cache can begin before the programme's scheduled start, so
+     * the lower bound is the file's own, checked below.
+     */
+    if (when > dvr_entry_get_stop_time(de))
       continue;
     /*
      * The position counts from the start of the file, and a backfilled
