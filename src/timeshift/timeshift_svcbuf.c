@@ -512,7 +512,13 @@ svcbuf_expire ( svcbuf_t *sb )
 
   for (b = TAILQ_FIRST(&sb->blocks); b != NULL && b->settled && b->seq < pin;
        b = nb) {
-    used = timeshift_size_used();
+    /*
+     * Compare each budget with its own total: under "RAM only" max_size is
+     * the RAM size, and timeshift_size_used() counts the bytes staged to
+     * disk, which is zero there -- so the size arm never fired and only the
+     * period bounded the cache.
+     */
+    used = sb->ram_only ? timeshift_ram_used() : timeshift_size_used();
 
     if (!(limit && b->wall < limit) &&
         !(max_size && used > max_size))
