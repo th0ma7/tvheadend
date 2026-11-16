@@ -325,7 +325,7 @@ svcbuf_block_remove ( svcbuf_t *sb, svcbuf_block_t *b )
   timeshift_size_release(b->size);
 
   if (b->keep_ram)
-    timeshift_ram_release(b->size);
+    timeshift_ram_release(b->alloc);
 
   if (b->staging) {
     svcbuf_staging_release(b->staging);
@@ -715,19 +715,10 @@ svcbuf_input ( void *opaque, streaming_message_t *sm )
       }
 
       /*
-       * A retained-RAM block stays a RAM block for its whole lifetime.
-       * If the RAM budget becomes full while filling it, seal it and let
-       * the next block choose disk instead.
+       * A retained-RAM block stays a RAM block for its whole lifetime, and
+       * its whole allocation was reserved when it was created: appending
+       * into the room already paid for costs the budget nothing more.
        */
-      if (b && b->keep_ram) {
-        if (timeshift_ram_reserve(len)) {
-          ram_reserved = 1;
-        } else {
-          b->sealed = 1;
-          sb->cur = b = NULL;
-          tvh_cond_signal(&sb->cond, 0);
-        }
-      }
 
       /*
        * A disk block remains disk-backed until its normal block boundary.
@@ -735,8 +726,16 @@ svcbuf_input ( void *opaque, streaming_message_t *sm )
        * became available in the meantime.
        */
       if (b == NULL) {
-        if (!ram_reserved)
-          ram_reserved = timeshift_ram_reserve(len);
+        /*
+         * Reserve what malloc() will actually take, not what this append
+         * puts in it.  A block is sealed after SVCBUF_BLOCK_AGE whether it
+         * is full or not, so on a low-bitrate service a 256 KiB allocation
+         * can hold a tenth of that; charging the budget per appended byte
+         * let the retained set grow to several times "Maximum RAM size",
+         * which is the only bound under "RAM only".
+         */
+        alloc = MAX(len, SVCBUF_BLOCK_SIZE);
+        ram_reserved = timeshift_ram_reserve(alloc);
 
         keep_ram = ram_reserved;
 
@@ -760,8 +759,6 @@ svcbuf_input ( void *opaque, streaming_message_t *sm )
          * share one bounded backlog instead of each hitting a tiny
          * per-service block-count limit.
          */
-        alloc = MAX(len, SVCBUF_BLOCK_SIZE);
-
         if (!keep_ram) {
           if (!svcbuf_staging_reserve(alloc)) {
             timeshift_size_release(len);
@@ -784,7 +781,7 @@ svcbuf_input ( void *opaque, streaming_message_t *sm )
           timeshift_size_release(len);
 
           if (ram_reserved)
-            timeshift_ram_release(len);
+            timeshift_ram_release(alloc);
 
           if (staging_reserved)
             svcbuf_staging_release(staging_reserved);
