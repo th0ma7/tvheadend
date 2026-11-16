@@ -396,7 +396,9 @@ svcts_span ( svcts_t *st, int64_t *oldest, int64_t *newest )
 static int64_t
 svcts_oldest ( svcts_t *st )
 {
-  int64_t oldest, newest, t;
+  int64_t oldest;
+  int64_t newest;
+  int64_t t;
   if (!svcts_span(st, &oldest, &newest))
     return 0;
   t = st->live_time - (st->live_mono - oldest) + SVCTS_PREROLL;
@@ -409,7 +411,8 @@ static void
 svcts_fill_status ( svcts_t *st, timeshift_status_t *status )
 {
   int64_t cur = st->state == SVCTS_LIVE ? st->live_time : st->last_time;
-  int64_t oldest, newest;
+  int64_t oldest;
+  int64_t newest;
 
   status->full = 0;
   status->shift = ts_rescale_inv(MAX(0, st->live_time - cur), 1000000);
@@ -477,7 +480,10 @@ svcts_live_rebase ( svcts_t *st, streaming_message_t *sm )
 {
   th_pkt_t *pkt = sm->sm_data;
   th_pkt_t *n;
-  int64_t clock, adjusted, last_clock, target;
+  int64_t clock;
+  int64_t adjusted;
+  int64_t last_clock;
+  int64_t target;
 
   if (st->live_rebase_pending) {
 
@@ -777,7 +783,11 @@ svcts_calibrate ( svcts_t *st, th_pkt_t *pkt )
 static void
 svcts_replay_rebase ( svcts_t *st, const th_pkt_t *pkt )
 {
-  int64_t clock, raw, adjusted, target, rebased;
+  int64_t clock;
+  int64_t raw;
+  int64_t adjusted;
+  int64_t target;
+  int64_t rebased;
 
   if (!st->replay_rebase_pending)
     return;
@@ -845,7 +855,8 @@ svcts_sink ( void *opaque, streaming_message_t *sm )
 {
   svcts_t *st = opaque;
   streaming_start_t *ss;
-  th_pkt_t *pkt, *n;
+  th_pkt_t *pkt;
+  th_pkt_t *n;
   svcts_pkt_t *p;
 
   if (sm->sm_type == SMT_START) {
@@ -1418,7 +1429,9 @@ svcts_rewind_find ( svcts_t *st )
   svcts_pkt_t *p;
   svcts_pkt_t *n;
   svcts_pkt_t *kf;
-  int64_t step = SVCTS_REWIND_STEP, from, oldest;
+  int64_t step = SVCTS_REWIND_STEP;
+  int64_t from;
+  int64_t oldest;
   int at_start;
 
   for (;;) {
@@ -1475,7 +1488,9 @@ static int64_t
 svcts_play ( svcts_t *st )
 {
   svcts_pkt_t *p;
-  int64_t now, deliver, w;
+  int64_t now;
+  int64_t deliver;
+  int64_t w;
 
   for (;;) {
     now = mclk();
@@ -1595,7 +1610,8 @@ svcts_reposition ( svcts_t *st )
 static void
 svcts_speed ( svcts_t *st, streaming_message_t *ctrl )
 {
-  int speed = ctrl->sm_code, kf;
+  int speed = ctrl->sm_code;
+  int kf;
 
   if (speed > 3200)  speed = 3200;
   if (speed < -3200) speed = -3200;
@@ -1635,7 +1651,9 @@ static void
 svcts_skip ( svcts_t *st, streaming_message_t *ctrl )
 {
   streaming_skip_t *skip = ctrl->sm_data;
-  int64_t t, oldest, cur;
+  int64_t t;
+  int64_t oldest;
+  int64_t cur;
   int sync_live;
 
   switch (skip->type) {
@@ -1721,7 +1739,8 @@ svcts_thread ( void *aux )
 {
   svcts_t *st = aux;
   streaming_message_t *ctrl;
-  int64_t wait, now;
+  int64_t wait;
+  int64_t now;
 
   tvh_mutex_lock(&st->lock);
   while (st->run) {

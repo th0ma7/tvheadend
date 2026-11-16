@@ -322,7 +322,8 @@ svcbuf_block_remove ( svcbuf_t *sb, svcbuf_block_t *b )
     if (r->blk == b) {
       r->blk = next;
       r->off = 0;
-      r->skipped = r->lost = 1;
+      r->lost = 1;
+      r->skipped = 1;
     }
   TAILQ_REMOVE(&sb->blocks, b, link);
   sb->size -= b->size;
@@ -588,7 +589,8 @@ svcbuf_writer ( void *aux )
         if (seg == NULL || seg->size + (off_t)b->size > SVCBUF_SEG_SIZE) {
           if (seg && seg->nblocks == 0)
             svcbuf_seg_release(sb, seg);
-          seg = sb->wr_seg = svcbuf_seg_open(sb);
+          sb->wr_seg = svcbuf_seg_open(sb);
+          seg = sb->wr_seg;
         }
         if (seg) {
           data = b->data;
@@ -670,7 +672,8 @@ svcbuf_block_new
   if (sb->wr_next == NULL)
     sb->wr_next = b;
 
-  return sb->cur = b;
+  sb->cur = b;
+  return b;
 }
 
 static void
@@ -678,7 +681,8 @@ svcbuf_input ( void *opaque, streaming_message_t *sm )
 {
   svcbuf_t *sb = opaque;
   svcbuf_block_t *b;
-  streaming_start_t *ss, *old = NULL;
+  streaming_start_t *ss;
+  streaming_start_t *old = NULL;
   pktbuf_t *pb;
   size_t len;
 
@@ -712,7 +716,8 @@ svcbuf_input ( void *opaque, streaming_message_t *sm )
   } else if (sm->sm_type == SMT_MPEGTS) {
     int keep_ram = 0;
     int ram_reserved = 0;
-    size_t alloc, staging_reserved = 0;
+    size_t alloc;
+    size_t staging_reserved = 0;
 
     pb  = sm->sm_data;
     len = pktbuf_len(pb);
@@ -737,7 +742,8 @@ svcbuf_input ( void *opaque, streaming_message_t *sm )
       if (b && (b->size + len > b->alloc ||
                 mclk() - b->mono >= SVCBUF_BLOCK_AGE)) {
         b->sealed = 1;
-        sb->cur = b = NULL;
+        b = NULL;
+        sb->cur = NULL;
         tvh_cond_signal(&sb->cond, 0);
       }
 
@@ -1078,14 +1084,17 @@ svcbuf_gate_thread ( void *aux )
   svcbuf_gate_t *g = aux;
   svcbuf_t *sb = g->sb;
   service_t *t = sb->service;
-  svcbuf_block_t *b, *nb;
+  svcbuf_block_t *b;
+  svcbuf_block_t *nb;
   streaming_start_t *ss;
   pktbuf_t *pb;
   uint64_t bytes = 0;
   uint64_t start_seq;
   size_t n;
   off_t off;
-  int fd, r, live = 0;
+  int fd;
+  int r;
+  int live = 0;
 
   tvh_mutex_lock(&sb->lock);
 
@@ -1315,7 +1324,10 @@ static int
 svcbuf_gate_start ( svcbuf_gate_t *g )
 {
   svcbuf_t *sb = g->sb;
-  svcbuf_block_t *b, *first, *last, *pos = NULL;
+  svcbuf_block_t *b;
+  svcbuf_block_t *first;
+  svcbuf_block_t *last;
+  svcbuf_block_t *pos = NULL;
   streaming_start_t *ss;
   uint64_t start_seq;
 
@@ -1647,7 +1659,8 @@ int64_t
 svcbuf_reader_seek ( svcbuf_reader_t *r, int64_t mono )
 {
   svcbuf_t *sb = r->sb;
-  svcbuf_block_t *b, *pos;
+  svcbuf_block_t *b;
+  svcbuf_block_t *pos;
   int64_t ret = 0;
 
   tvh_mutex_lock(&sb->lock);
@@ -1676,11 +1689,13 @@ svcbuf_reader_read_map ( svcbuf_reader_t *r, pktbuf_t **pb,
                          int64_t *block_mono )
 {
   svcbuf_t *sb = r->sb;
-  svcbuf_block_t *b, *nb;
+  svcbuf_block_t *b;
+  svcbuf_block_t *nb;
   svcbuf_seg_t *seg;
   size_t n;
   off_t off;
-  int fd, e;
+  int fd;
+  int e;
 
   *pb = NULL;
   if (ss)

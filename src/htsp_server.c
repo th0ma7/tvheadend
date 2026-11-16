@@ -437,7 +437,9 @@ htsp_cache_record_position
 {
   dvr_entry_t *de;
   channel_t *ch;
-  time_t when, file_start, file_stop;
+  time_t when;
+  time_t file_start;
+  time_t file_stop;
   int filecount;
   uint32_t pos;
 
@@ -2299,7 +2301,8 @@ htsp_method_addDvrEntry(htsp_connection_t *htsp, htsmsg_t *in)
 #endif
 
   {
-    int have_channel, have_event;
+    int have_channel;
+    int have_event;
 
     have_channel = !htsmsg_get_u32(in, "channelId", &u32);
     if (have_channel)

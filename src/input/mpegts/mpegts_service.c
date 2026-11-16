@@ -401,7 +401,8 @@ mpegts_input_cache_retention ( mpegts_input_t *mi, int *cache_only )
   service_t *t;
   th_subscription_t *ths;
   int any = 0;
-  int64_t oldest, newest;
+  int64_t oldest;
+  int64_t newest;
   int64_t total = 0;
 
   *cache_only = 1;

@@ -534,7 +534,9 @@ _epg_retro_release ( epg_retro_event_t *r )
 static void
 _epg_retro_purge ( void )
 {
-  epg_retro_event_t *r, *next, *oldest;
+  epg_retro_event_t *r;
+  epg_retro_event_t *next;
+  epg_retro_event_t *oldest;
   time_t now = gclk();
 
   for (r = LIST_FIRST(&epg_retro_events); r != NULL; r = next) {
@@ -563,7 +565,8 @@ _epg_retro_hold ( epg_broadcast_t *ebc )
 {
 #if ENABLE_TIMESHIFT
   epg_retro_event_t *r;
-  time_t expires, now;
+  time_t expires;
+  time_t now;
 
   if (!timeshift_conf.enabled || !timeshift_conf.record_cache)
     return;
@@ -636,7 +639,8 @@ _epg_retro_hold ( epg_broadcast_t *ebc )
 static void
 _epg_retro_drop_channel ( channel_t *ch )
 {
-  epg_retro_event_t *r, *next;
+  epg_retro_event_t *r;
+  epg_retro_event_t *next;
 
   for (r = LIST_FIRST(&epg_retro_events); r != NULL; r = next) {
     next = LIST_NEXT(r, link);

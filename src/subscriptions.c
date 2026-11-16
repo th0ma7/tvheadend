@@ -109,8 +109,10 @@ subscription_link_service(th_subscription_t *s, service_t *t)
                          &s->ths_replaying, &s->ths_backfill_start,
                          s->ths_prch && s->ths_prch->prch_sq_used ?
                            &s->ths_prch->prch_sq : NULL);
-    if (gate)
-      s->ths_output = s->ths_gate = gate;
+    if (gate) {
+      s->ths_gate = gate;
+      s->ths_output = gate;
+    }
     s->ths_backfill_from = 0;
     s->ths_backfill_to = 0;
     s->ths_backfill_all = 0;
@@ -924,7 +926,8 @@ subscription_cache_keepalive_has_real
 static int64_t
 subscription_cache_keepalive_span ( service_t *t )
 {
-  int64_t oldest, newest;
+  int64_t oldest;
+  int64_t newest;
 
   if (t == NULL || t->s_svcbuf == NULL ||
       !svcbuf_span(t->s_svcbuf, &oldest, &newest) ||
@@ -1063,7 +1066,8 @@ subscription_cache_keepalive_after_unlink ( service_t *t )
   th_subscription_t *keep = NULL;
   th_subscription_t *victim = NULL;
   service_instance_t *si;
-  int64_t span, victim_span;
+  int64_t span;
+  int64_t victim_span;
   int admit;
   int error = 0;
 

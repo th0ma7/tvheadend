@@ -224,7 +224,11 @@ headers_complete(globalheaders_t *gh)
   streaming_start_component_t *ssc;
   int64_t *qd;
   int64_t qd_max = 0;
-  int i, ncomp, threshold = 0, roll = 0, rolls_left;
+  int i;
+  int ncomp;
+  int threshold = 0;
+  int roll = 0;
+  int rolls_left;
   int replay;
 
   assert(ss != NULL);

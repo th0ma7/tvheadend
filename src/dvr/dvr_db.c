@@ -3314,7 +3314,9 @@ dvr_cache_only_subscribe(dvr_entry_t *de)
 {
   profile_chain_t *prch;
   streaming_target_t *sink;
-  th_subscription_t *sub, *s, *next;
+  th_subscription_t *sub;
+  th_subscription_t *s;
+  th_subscription_t *next;
   int error = 0;
 
   if (!timeshift_conf.enabled || !timeshift_conf.record_cache)
@@ -3404,7 +3406,8 @@ dvr_cache_only_unsubscribe(dvr_entry_t *de)
 {
   profile_chain_t *prch = de->de_chain;
   streaming_target_t *sink = de->de_cache_sink;
-  th_subscription_t *s, *sub = NULL;
+  th_subscription_t *s;
+  th_subscription_t *sub = NULL;
 
   /*
    * Locate the warmup subscription by the profile-chain owned by this
