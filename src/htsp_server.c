@@ -2168,10 +2168,12 @@ htsp_cache_record_target ( htsp_connection_t *htsp,
   *cache_full = 0;
 
   if (requested == NULL ||
-      (ch = requested->channel) == NULL ||
+      requested->channel == NULL ||
       !timeshift_conf.enabled ||
       !timeshift_conf.record_cache)
     return requested;
+
+  ch = requested->channel;
 
   now = gclk();
   now_mono = mclk();

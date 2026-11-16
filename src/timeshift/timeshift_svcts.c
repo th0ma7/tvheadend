@@ -868,7 +868,8 @@ svcts_sink ( void *opaque, streaming_message_t *sm )
   if (st->calibrated &&
       st->rd_start &&
       pkt->pkt_dts != PTS_UNSET) {
-    n = pkt_copy_shallow(pkt);
+    if ((n = pkt_copy_shallow(pkt)) == NULL)
+      goto done;
 
     n->pkt_dts =
       svcts_unwrap((pkt->pkt_dts & PTS_MASK) - st->off, st->expect);
@@ -884,7 +885,10 @@ svcts_sink ( void *opaque, streaming_message_t *sm )
     if (n->pkt_dts != PTS_UNSET && n->pkt_type != SCT_TELETEXT)
       st->replay_last_dts = n->pkt_dts;
 
-    p = calloc(1, sizeof(*p));
+    if ((p = calloc(1, sizeof(*p))) == NULL) {
+      pkt_ref_dec(n);
+      goto done;
+    }
     p->pkt = n;
     p->time = svcts_pkt_time(n);
     p->start = st->rd_start;
@@ -894,6 +898,7 @@ svcts_sink ( void *opaque, streaming_message_t *sm )
     TAILQ_INSERT_TAIL(&st->q, p, link);
   }
 
+done:
   tvh_mutex_unlock(&st->lock);
   streaming_msg_free(sm);
 }
