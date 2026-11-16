@@ -3448,10 +3448,11 @@ dvr_stop_recording(dvr_entry_t *de, int stopcode, int saveconf, int clone)
     de->de_dont_reschedule = 1;
 
     /*
-     * Cache-only entries are transient scheduler objects, not
-     * recordings. Mark the run finished for scheduler/autorec
-     * accounting, then remove the entry asynchronously. There is
-     * no recording file and therefore no retention lifecycle.
+     * Nothing creates a cache-only entry but the user: de_cache_only is a
+     * PO_ADVANCED property with a user-facing description, so this entry was
+     * scheduled by hand.  Complete it like any other -- there is no file, but
+     * the entry is a record of what was asked for, and destroying it made a
+     * scheduled warmup vanish from the log the moment it finished.
      */
     dvr_entry_set_state(de, DVR_COMPLETED, DVR_RS_FINISHED, stopcode);
 
@@ -3466,7 +3467,10 @@ dvr_stop_recording(dvr_entry_t *de, int stopcode, int saveconf, int clone)
         dvr_autorec_changed(dae, 0);
     }
 
-    dvr_entry_deferred_destroy(de);
+    if (saveconf)
+      idnode_changed(&de->de_id);
+
+    dvr_entry_retention_timer(de);
     return;
   }
 

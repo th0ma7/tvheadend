@@ -1771,7 +1771,7 @@ dvr_thread(void *aux)
   th_pkt_t *pkt, *pkt2, *pkt3;
   streaming_start_t *ss = NULL;
   int run = 1, started = 0, muxing = 0, comm_skip, rs;
-  int cache_retro = 0, cache_full = 0;
+  int cache_retro = 0;
   int epg_running = 0, old_epg_running, epg_pause = 0;
   int commercial = COMMERCIAL_UNKNOWN;
   int running_disabled;
@@ -2001,17 +2001,23 @@ dvr_thread(void *aux)
         goto fin;
 
       } else if (de->de_last_error != sm->sm_code ||
-                 de->de_cache_retro || de->de_cache_full) {
+                 de->de_cache_retro) {
 	 /*
 	  * Error during recording.
 	  *
-	  * A cache-owned recording ends on this STOP and on nothing else:
-	  * dvr_entry_start_recording() arms no stop timer for it.  The gate
-	  * can report a code SMT_SERVICE_STATUS has already set, and then
-	  * de_last_error matches and every branch here is skipped -- while
-	  * the gate, now GATE_DONE, drops whatever follows.  The thread would
-	  * wait for a message that cannot come, the entry stay DVR_RECORDING
-	  * and the subscription keep its tuner.
+	  * A retrospective recording ends on this STOP and on nothing else:
+	  * dvr_entry_start_recording() returns before arming a stop timer for
+	  * de_cache_retro, so the gate's boundary is the only end there is.
+	  * The gate can report a code SMT_SERVICE_STATUS has already set, and
+	  * then de_last_error matches and every branch here is skipped, while
+	  * the gate, now GATE_DONE, drops whatever follows.
+	  *
+	  * de_cache_full is deliberately not included.  That recording does
+	  * get the ordinary stop timer, so it needs no help ending, and the
+	  * flag stays set for its whole run: forcing this branch on it turned
+	  * every late transport error -- a lost signal an hour in -- into the
+	  * end of the recording, where the thread used to stay and pick the
+	  * stream back up on the next SMT_START.
 	  */
 
 	dvr_rec_set_state(de, DVR_RS_ERROR, sm->sm_code);
@@ -2028,14 +2034,13 @@ fin:
          * from this thread: that routine joins this very thread.
          */
         cache_retro = de->de_cache_retro;
-        cache_full  = de->de_cache_full;
 
         if (!dvr_thread_global_lock(de, &run))
           break;
 
         dvr_thread_epilog(de, postproc);
 
-        if (cache_retro || cache_full)
+        if (cache_retro)
           dvr_entry_cache_replay_done(de);
 
         dvr_thread_global_unlock(de);
@@ -2049,7 +2054,7 @@ fin:
 	  ss = NULL;
         }
 
-        if (cache_retro || cache_full)
+        if (cache_retro)
           run = 0;
       }
       break;

@@ -116,8 +116,19 @@ subscription_link_service(th_subscription_t *s, service_t *t)
     s->ths_backfill_all = 0;
   }
   /* a client timeshifting through the channel cache */
-  if (s->ths_prch && s->ths_prch->prch_svcts)
+  if (s->ths_prch && s->ths_prch->prch_svcts) {
+    /*
+     * The cache is made when the service starts, so a service already tuned
+     * when "Record from cache" was turned on has none, and svcts would
+     * attach to nothing: every skip answers SMT_SKIP_ERROR and there is no
+     * Classic buffer either, because profile.c routed past it.  Make it here
+     * instead -- svcbuf_service_start() seeds the stream map from the running
+     * service, so the cache simply starts empty and fills from now on.
+     */
+    if (t->s_svcbuf == NULL)
+      svcbuf_service_start(t);
     svcts_attach(s->ths_prch->prch_svcts, t);
+  }
 #endif
 
   if(elementary_set_has_streams(&t->s_components, 1) || t->s_type != STYPE_STD) {
