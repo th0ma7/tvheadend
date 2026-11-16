@@ -2165,8 +2165,11 @@ htsp_cache_record_target ( htsp_connection_t *htsp,
   htsp_subscription_t *hs;
   channel_t *ch;
   epg_broadcast_t *current;
-  int64_t now_mono, shift_us, status_mono;
-  time_t now, when;
+  int64_t now_mono;
+  int64_t shift_us;
+  int64_t status_mono;
+  time_t now;
+  time_t when;
   int historical = 0;
 
   *cache_full = 0;

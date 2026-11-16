@@ -800,11 +800,6 @@ svcbuf_input ( void *opaque, streaming_message_t *sm )
           return;
         }
 
-      } else if (!b->keep_ram) {
-        /*
-         * Existing disk-staging block: no retained RAM reservation.
-         */
-        ram_reserved = 0;
       }
 
       if (sb->limit_warned) {
