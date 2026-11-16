@@ -210,8 +210,11 @@ typedef struct htsp_subscription {
    * Last shared-timeshift position reported by the server.
    * shift uses Tvheadend's internal 90 kHz base.
    */
-  int64_t hs_timeshift_shift;
-  int64_t hs_timeshift_status_mono;
+  /* written from the streaming thread, read from the HTSP command thread:
+     both go through the atomic accessors, so a 32-bit build cannot tear
+     them -- the value decides whether addDvrEntry records historically */
+  volatile int64_t hs_timeshift_shift;
+  volatile int64_t hs_timeshift_status_mono;
 #endif
 
 } htsp_subscription_t;
@@ -397,13 +400,14 @@ static int
 htsp_cache_playhead ( htsp_subscription_t *hs, time_t *when )
 {
   int64_t shift_us = 0;
+  int64_t mono;
 
   if (hs->hs_s == NULL || hs->hs_s->ths_channel == NULL)
     return 0;
 
-  if (hs->hs_timeshift_status_mono &&
-      mclk() - hs->hs_timeshift_status_mono <= sec2mono(5))
-    shift_us = ts_rescale(hs->hs_timeshift_shift, 1000000);
+  mono = atomic_get_s64(&hs->hs_timeshift_status_mono);
+  if (mono && mclk() - mono <= sec2mono(5))
+    shift_us = ts_rescale(atomic_get_s64(&hs->hs_timeshift_shift), 1000000);
   if (shift_us < 0)
     shift_us = 0;
 
@@ -2161,7 +2165,7 @@ htsp_cache_record_target ( htsp_connection_t *htsp,
   htsp_subscription_t *hs;
   channel_t *ch;
   epg_broadcast_t *current;
-  int64_t now_mono, shift_us;
+  int64_t now_mono, shift_us, status_mono;
   time_t now, when;
   int historical = 0;
 
@@ -2191,11 +2195,12 @@ htsp_cache_record_target ( htsp_connection_t *htsp,
       continue;
 
     /* svcts sends status once a second and immediately with seek replies. */
-    if (hs->hs_timeshift_status_mono == 0 ||
-        now_mono - hs->hs_timeshift_status_mono > sec2mono(5))
+    status_mono = atomic_get_s64(&hs->hs_timeshift_status_mono);
+    if (status_mono == 0 ||
+        now_mono - status_mono > sec2mono(5))
       continue;
 
-    shift_us = ts_rescale(hs->hs_timeshift_shift, 1000000);
+    shift_us = ts_rescale(atomic_get_s64(&hs->hs_timeshift_shift), 1000000);
 
     /*
      * A second fresh subscription which is live or still inside the
@@ -3214,8 +3219,8 @@ htsp_method_live(htsp_connection_t *htsp, htsmsg_t *in)
   skip.type = SMT_SKIP_LIVE;
   tvhtrace(LS_HTSP_SUB, "live");
 #if ENABLE_TIMESHIFT
-  hs->hs_timeshift_shift = 0;
-  hs->hs_timeshift_status_mono = mclk();
+  atomic_set_s64(&hs->hs_timeshift_shift, 0);
+  atomic_set_s64(&hs->hs_timeshift_status_mono, mclk());
 #endif
   subscription_set_skip(hs->hs_s, &skip);
 
@@ -4939,8 +4944,8 @@ htsp_subscription_speed(htsp_subscription_t *hs, int speed)
 static void
 htsp_subscription_timeshift_status(htsp_subscription_t *hs, timeshift_status_t *status)
 {
-  hs->hs_timeshift_shift = status->shift;
-  hs->hs_timeshift_status_mono = mclk();
+  atomic_set_s64(&hs->hs_timeshift_shift, status->shift);
+  atomic_set_s64(&hs->hs_timeshift_status_mono, mclk());
 
   htsmsg_t *m = htsmsg_create_map();
   htsmsg_add_str(m, "method", "timeshiftStatus");

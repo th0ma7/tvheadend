@@ -1006,6 +1006,18 @@ svcts_replay_open ( svcts_t *st, int64_t time )
   st->replay_last_dts = PTS_UNSET;
   st->expect = PTS_UNSET;
 
+  /*
+   * svcts_fill() releases st->lock, so svcts_attach() can have pointed
+   * st->sb at another service's cache since the reader was made.  Keeping
+   * it would seek the previous cache and feed the client the previous
+   * channel's MPEG-TS, so drop it and read the one we are attached to.
+   */
+  if (st->rd != NULL && st->rd_service != svcbuf_service(sb)) {
+    svcbuf_reader_destroy(st->rd);
+    st->rd = NULL;
+    st->rd_service = NULL;
+  }
+
   if (st->rd == NULL) {
     st->rd = svcbuf_reader_create(sb);
     st->rd_service = svcbuf_service(sb);
