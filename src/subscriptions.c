@@ -74,6 +74,30 @@ subgetstate(th_subscription_t *s)
  * Subscription linking
  * *************************************************************************/
 
+/*
+ * A sink for a subscription that must not be fed: every message is freed.
+ * Static, so that falling back to it cannot itself fail to allocate.
+ */
+static void
+subscription_input_drop(void *opaque, streaming_message_t *sm)
+{
+  streaming_msg_free(sm);
+}
+
+static htsmsg_t *
+subscription_input_drop_info(void *opaque, htsmsg_t *list)
+{
+  htsmsg_add_str(list, NULL, "dropped: no replay gate");
+  return list;
+}
+
+static streaming_target_t subscription_drop_target = {
+  .st_ops = {
+    .st_cb   = subscription_input_drop,
+    .st_info = subscription_input_drop_info
+  }
+};
+
 /**
  * The service is producing output.
  */
@@ -116,11 +140,16 @@ subscription_link_service(th_subscription_t *s, service_t *t)
       /*
        * A bounded retrospective recording is given a gate whether or not
        * there is a cache, so that it fails closed: no gate here means it
-       * could not be allocated.  Going on would hand live TV to a recording
-       * that has no stop timer and no historical boundary, so end it as the
-       * gate ends a replay that has nothing to give.
+       * could not be allocated.  Nothing live may reach a recording that has
+       * no stop timer and no historical boundary, so its output becomes a
+       * sink.  The stop that ends it goes straight to the queue the DVR
+       * thread reads -- sent down the chain, globalheaders would drop a stop
+       * arriving before any start, as it does for Matroska.
        */
-      streaming_target_deliver2(s->ths_output,
+      streaming_target_t *end = s->ths_prch && s->ths_prch->prch_sq_used ?
+                                &s->ths_prch->prch_sq.sq_st : s->ths_output;
+      s->ths_output = &subscription_drop_target;
+      streaming_target_deliver2(end,
                                 streaming_msg_create_code(SMT_STOP, SM_CODE_NO_SPACE));
     }
     s->ths_backfill_from = 0;

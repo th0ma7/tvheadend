@@ -67,6 +67,7 @@ typedef struct timeshift_file
   int64_t                       ram_size; ///< RAM area size in bytes
 
   uint8_t                       bad;      ///< File is broken
+  uint8_t                       closed;   ///< Writing finished, EOF marker written
 
   int                           refcount; ///< Reader ref count
 
