@@ -2150,6 +2150,15 @@ dvr_entry_create_by_autorec(int enabled, epg_broadcast_t *e, dvr_autorec_entry_t
   /* Identical duplicate detection
      NOTE: Semantic duplicate detection is deferred to the start time of recording and then done using _dvr_duplicate_event by dvr_timer_start_recording. */
   LIST_FOREACH(de, &dvrentries, de_global_link) {
+    /*
+     * A cache-only warmup writes no file, so it is no recording for a rule
+     * that records for real to be a duplicate of.  A cache-only rule is
+     * still turned away by one, which is what keeps a completed warmup from
+     * being spawned a second time for the same broadcast.
+     */
+    if (de->de_cache_only &&
+        !(dae->dae_config && dae->dae_config->dvr_cache_only))
+      continue;
     if (de->de_bcast == e || epg_episode_match(de->de_bcast, e))
       if (strcmp(dae->dae_owner ?: "", de->de_owner ?: "") == 0) {
         /* See if our new broadcast is better than our existing schedule,
@@ -3096,6 +3105,18 @@ void dvr_event_running(epg_broadcast_t *e, epg_running_t running)
                    idnode_uuid_as_str(&de->de_id, ubuf), srcname,
                    epg_broadcast_get_title(e, NULL),
                    channel_get_name(de->de_channel, channel_blank_name));
+#if ENABLE_TIMESHIFT
+          /*
+           * A full-cache recording may still be replaying history when the
+           * EIT marks the programme over, and stopping it here would drop
+           * whatever the cache had not yet written.  Hand the stop to the
+           * timer, whose guard waits for the replay to reach its boundary.
+           */
+          if (de->de_cache_full && de->de_s && de->de_s->ths_replaying) {
+            gtimer_arm_rel(&de->de_timer, dvr_timer_stop_recording, de, 1);
+            continue;
+          }
+#endif
           dvr_stop_recording(de, SM_CODE_OK, 0, 0);
         }
       }
@@ -3462,11 +3483,13 @@ dvr_stop_recording(dvr_entry_t *de, int stopcode, int saveconf, int clone)
     de->de_dont_reschedule = 1;
 
     /*
-     * Nothing creates a cache-only entry but the user: de_cache_only is a
-     * PO_ADVANCED property with a user-facing description, so this entry was
-     * scheduled by hand.  Complete it like any other -- there is no file, but
-     * the entry is a record of what was asked for, and destroying it made a
-     * scheduled warmup vanish from the log the moment it finished.
+     * A cache-only entry is scheduled by hand -- de_cache_only is a
+     * PO_ADVANCED property with a user-facing description -- or comes from a
+     * DVR configuration set to cache only, autorec rules included.  Complete
+     * it like any other: there is no file, but the entry is a record of what
+     * was asked for.  Destroying it made a scheduled warmup vanish from the
+     * log the moment it finished, and let an autorec rule spawn the same
+     * warmup again, since nothing was left to match the broadcast against.
      */
     dvr_entry_set_state(de, DVR_COMPLETED, DVR_RS_FINISHED, stopcode);
 

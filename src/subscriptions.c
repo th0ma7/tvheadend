@@ -112,6 +112,16 @@ subscription_link_service(th_subscription_t *s, service_t *t)
     if (gate) {
       s->ths_gate = gate;
       s->ths_output = gate;
+    } else if (s->ths_backfill_to && !s->ths_backfill_all) {
+      /*
+       * A bounded retrospective recording is given a gate whether or not
+       * there is a cache, so that it fails closed: no gate here means it
+       * could not be allocated.  Going on would hand live TV to a recording
+       * that has no stop timer and no historical boundary, so end it as the
+       * gate ends a replay that has nothing to give.
+       */
+      streaming_target_deliver2(s->ths_output,
+                                streaming_msg_create_code(SMT_STOP, SM_CODE_NO_SPACE));
     }
     s->ths_backfill_from = 0;
     s->ths_backfill_to = 0;
@@ -584,7 +594,14 @@ subscription_input_null(void *opaque, streaming_message_t *sm)
       streaming_msg_free(sm);
       return;
     }
-    LIST_INSERT_HEAD(&subscriptions_remove, s, ths_remove_link);
+    /*
+     * The cache keepalive is a subscription on an ordinary service, so a
+     * second terminal stop can reach it before the delayed removal has run.
+     * Inserting the same link twice makes it point at itself; the drain
+     * would then free the subscription and keep reading it from the head.
+     */
+    if (LIST_SAFE_ENTRY(s, ths_remove_link))
+      LIST_INSERT_HEAD(&subscriptions_remove, s, ths_remove_link);
     subscription_delayed_reschedule(0);
   }
 

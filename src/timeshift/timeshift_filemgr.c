@@ -410,8 +410,9 @@ timeshift_file_t *timeshift_filemgr_get ( timeshift_t *ts, int64_t start_time )
       (tsf_tl->ram && tsf_tl->woff >= timeshift_conf.ram_segment_size)) {
     tsf_hd = TAILQ_FIRST(&ts->files);
 
-    /* Close existing */
-    if (tsf_tl)
+    /* Close existing -- unless the writer gave up on it, which it closed
+       when it did: a second close writes an EOF marker to wfd -1 */
+    if (tsf_tl && !tsf_tl->bad)
       timeshift_filemgr_close(tsf_tl);
 
     /* Check period */
