@@ -879,6 +879,7 @@ svcbuf_input ( void *opaque, streaming_message_t *sm )
 static htsmsg_t *
 svcbuf_input_info ( void *opaque, htsmsg_t *list )
 {
+  (void)opaque;
   htsmsg_add_str(list, NULL, "channel cache input");
   return list;
 }
@@ -1326,7 +1327,7 @@ svcbuf_gate_start ( svcbuf_gate_t *g )
   svcbuf_t *sb = g->sb;
   svcbuf_block_t *b;
   svcbuf_block_t *first;
-  svcbuf_block_t *last;
+  const svcbuf_block_t *last;
   svcbuf_block_t *pos = NULL;
   streaming_start_t *ss;
   uint64_t start_seq;
@@ -1442,15 +1443,13 @@ svcbuf_gate_input ( void *opaque, streaming_message_t *sm )
       return;
     }
 
-    if (sm->sm_type == SMT_START) {
-      /*
-       * If cache replay starts, replace this current START with the
-       * historical START belonging to the cached MPEG-TS.
-       */
-      if (svcbuf_gate_start(g)) {
-        streaming_msg_free(sm);
-        return;
-      }
+    /*
+     * If cache replay starts, replace this current START with the
+     * historical START belonging to the cached MPEG-TS.
+     */
+    if (sm->sm_type == SMT_START && svcbuf_gate_start(g)) {
+      streaming_msg_free(sm);
+      return;
     }
     break;
 

@@ -81,12 +81,14 @@ subgetstate(th_subscription_t *s)
 static void
 subscription_input_drop(void *opaque, streaming_message_t *sm)
 {
+  (void)opaque;
   streaming_msg_free(sm);
 }
 
 static htsmsg_t *
 subscription_input_drop_info(void *opaque, htsmsg_t *list)
 {
+  (void)opaque;
   htsmsg_add_str(list, NULL, "dropped: no replay gate");
   return list;
 }
@@ -957,7 +959,7 @@ subscription_create
  */
 static int
 subscription_cache_keepalive_has_real
-  ( service_t *t, th_subscription_t *keep )
+  ( service_t *t, const th_subscription_t *keep )
 {
   th_subscription_t *s;
 
@@ -1006,7 +1008,7 @@ subscription_cache_keepalive_drop_soon ( th_subscription_t *s )
  */
 static th_subscription_t *
 subscription_cache_keepalive_select_victim
-  ( th_subscription_t *candidate, int64_t span,
+  ( const th_subscription_t *candidate, int64_t span,
     int *admit, int64_t *victim_span )
 {
   th_subscription_t *s;
@@ -1111,7 +1113,7 @@ subscription_cache_keepalive_after_unlink ( service_t *t )
   th_subscription_t *s;
   th_subscription_t *keep = NULL;
   th_subscription_t *victim = NULL;
-  service_instance_t *si;
+  const service_instance_t *si;
   int64_t span;
   int64_t victim_span;
   int admit;

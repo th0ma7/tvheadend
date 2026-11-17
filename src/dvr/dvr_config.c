@@ -674,7 +674,7 @@ dvr_config_class_enabled_opts(void *o, uint32_t opts)
 static uint32_t
 dvr_config_class_recording_only_opts(void *o, uint32_t opts)
 {
-  dvr_config_t *cfg = (dvr_config_t *)o;
+  const dvr_config_t *cfg = (const dvr_config_t *)o;
 
 #if ENABLE_TIMESHIFT
   if (cfg && cfg->dvr_cache_only)

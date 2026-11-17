@@ -637,7 +637,7 @@ _epg_retro_hold ( epg_broadcast_t *ebc )
 }
 
 static void
-_epg_retro_drop_channel ( channel_t *ch )
+_epg_retro_drop_channel ( const channel_t *ch )
 {
   epg_retro_event_t *r;
   epg_retro_event_t *next;

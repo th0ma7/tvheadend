@@ -2248,12 +2248,11 @@ htsp_cache_record_target ( htsp_connection_t *htsp,
      * historical, the server-side playhead is still authoritative and
      * the same full-cache semantics apply.
      */
-    if (requested != current) {
-      if (requested->stop > now ||
-          when + 2 < requested->start ||
-          when >= requested->stop + 2)
-        return requested;
-    }
+    if (requested != current &&
+        (requested->stop > now ||
+         when + 2 < requested->start ||
+         when >= requested->stop + 2))
+      return requested;
 
     historical++;
   }

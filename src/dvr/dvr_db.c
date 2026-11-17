@@ -3320,12 +3320,14 @@ dvr_create_recording_scene_markers(dvr_entry_t *de)
 static void
 dvr_cache_only_sink_input(void *opaque, streaming_message_t *sm)
 {
+  (void)opaque;
   streaming_msg_free(sm);
 }
 
 static htsmsg_t *
 dvr_cache_only_sink_info(void *opaque, htsmsg_t *list)
 {
+  (void)opaque;
   htsmsg_add_str(list, NULL, "timeshift cache warmup sink");
   return list;
 }
@@ -3685,7 +3687,7 @@ dvr_entry_start_recording(dvr_entry_t *de, int clone)
 
   if (de->de_cache_only) {
 #if ENABLE_TIMESHIFT
-    if ((r = dvr_cache_only_subscribe(de)) < 0) {
+    if (dvr_cache_only_subscribe(de) < 0) {
       de->de_dont_reschedule = 1;
       dvr_entry_completed(de, SM_CODE_BAD_SOURCE);
       return;
@@ -4018,7 +4020,7 @@ static int
 dvr_entry_class_cache_only_set(void *o, const void *v)
 {
   dvr_entry_t *de = (dvr_entry_t *)o;
-  return dvr_entry_class_int_set(de, &de->de_cache_only, *(int *)v);
+  return dvr_entry_class_int_set(de, &de->de_cache_only, *(const int *)v);
 }
 #endif
 

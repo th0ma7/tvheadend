@@ -930,6 +930,7 @@ done:
 static htsmsg_t *
 svcts_sink_info ( void *opaque, htsmsg_t *list )
 {
+  (void)opaque;
   htsmsg_add_str(list, NULL, "channel cache timeshift replay");
   return list;
 }
@@ -1213,7 +1214,7 @@ svcts_skip_back_select ( svcts_t *st )
 {
   svcts_pkt_t *p;
   svcts_pkt_t *n;
-  svcts_pkt_t *kf = NULL;
+  const svcts_pkt_t *kf = NULL;
 
   st->skip_back = 0;
 
