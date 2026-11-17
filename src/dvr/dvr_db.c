@@ -1243,6 +1243,11 @@ dvr_entry_create(const char *uuid, htsmsg_t *conf, int clone)
          de2->de_start == de->de_start &&
          de2->de_sched_state != DVR_COMPLETED &&
          de2->de_sched_state != DVR_MISSED_TIME &&
+         /* A cache-only warmup writes no file, so a recording is no
+            duplicate of one -- as in dvr_entry_create_by_autorec(), where
+            the same warmup no longer turns a recording rule away.  A
+            recording still makes a second warmup redundant. */
+         !(de2->de_cache_only && !de->de_cache_only) &&
          strcmp(de2->de_owner ?: "", de->de_owner ?: "") == 0) {
         tvhinfo(LS_DVR, "delete entry %s \"%s\" on \"%s\" start time %"PRId64", "
            "scheduled for recording by \"%s\" (duplicate with %s)",
