@@ -221,6 +221,14 @@ tvh_stream_setup(TVHStream *self, TVHCodecProfile *profile, tvh_ssc_t *ssc)
         av_reduce(&fr.num, &fr.den, fr.num, fr.den, INT_MAX);
         self->context->iavctx->framerate = fr;
     }
+    /* The component handed downstream describes the encoded stream, whose
+     * frame duration is the encoder's: a field-rate deinterlacer halves it.
+     * Left at the source's, the muxers write it into the container (the
+     * Matroska DefaultDuration, the libav muxer's time base) and a 50 fps
+     * stream is announced at 25.  Cleared, it is taken by globalheaders from
+     * the first encoded packet, whose duration tvh_context_pack() sets. */
+    if (SCT_ISVIDEO(ssc->es_type))
+        ssc->es_frame_duration = 0;
     // setup parser
     tvh_context_setup_parser(self->context);
     if (!self->context->out_pkt)
